@@ -1,0 +1,14 @@
+[
+    {
+        "process_name": "bedrock",
+        "process_wasm_path": "/bedrock.wasm",
+        "on_exit": "Restart",
+        "request_networking": true,
+        "request_capabilities": [
+            "net:distro:sys",
+            "sqlite:distro:sys"
+        ],
+        "grant_capabilities": [],
+        "public": true
+    }
+]
