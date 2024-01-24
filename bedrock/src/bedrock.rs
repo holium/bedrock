@@ -9,11 +9,9 @@ use std::str::FromStr;
 use std::time::Duration;
 use std::time::SystemTime;
 use kinode_process_lib::{
+    print_to_terminal,
     Address,
-    sqlite::{
-        Sqlite,
-        SqlValue
-    }
+    sqlite::Sqlite,
 };
 
 const DEFAULT_TABLES: [&str; 8] = [
@@ -47,67 +45,69 @@ impl BedrockClient {
         // 1. connect to and setup postgres tables (if they aren't already setup)
         // bedrock formatting note:
         // set `type` to 'default' to define custom default access_rules for a path+role combo, othwerwise must match table name of row type
-        let _ = client.write("
-            CREATE TABLE IF NOT EXISTS self_info (
+        let creates = [
+            "CREATE TABLE IF NOT EXISTS self_info (
                 id      TEXT PRIMARY KEY,
-                id_bytes    bytea NOT NULL,
-                key     bytea NOT NULL,
+                id_bytes    BLOB NOT NULL,
+                key     BLOB NOT NULL,
                 multiaddr  TEXT
-            );
-            CREATE TABLE IF NOT EXISTS all_peers (
+            );".to_string(),
+            "CREATE TABLE IF NOT EXISTS all_peers (
                 name    TEXT PRIMARY KEY,
                 id      TEXT NOT NULL,
                 addr    TEXT
-            );
-            CREATE TABLE IF NOT EXISTS peers (
+            );".to_string(),
+            "CREATE TABLE IF NOT EXISTS peers (
                 path    TEXT NOT NULL,
                 id      TEXT NOT NULL,
                 role    TEXT NOT NULL DEFAULT 'member',
-                metadata     JSON,
-                created_at   TIMESTAMP NOT NULL,
-                updated_at   TIMESTAMP NOT NULL,
-                received_at  TIMESTAMP NOT NULL,
+                metadata     TEXT,
+                created_at   INTEGER NOT NULL,
+                updated_at   INTEGER NOT NULL,
+                received_at  INTEGER NOT NULL,
                 PRIMARY KEY (path, id)
-            );
-            CREATE TABLE IF NOT EXISTS paths (
+            );".to_string(),
+            "CREATE TABLE IF NOT EXISTS paths (
                 path    TEXT PRIMARY KEY,
                 host    TEXT NOT NULL,
-                metadata     JSON,
-                replication  TEXT NOT NULL DEFAULT 'host',
+                metadata     TEXT,
+                replication  TEXT NOT NULL DEFAULT 'Host',
                 security     TEXT NOT NULL DEFAULT 'host-invite',
-                created_at   TIMESTAMP NOT NULL,
-                updated_at   TIMESTAMP NOT NULL,
-                received_at  TIMESTAMP NOT NULL
-            );
-            CREATE TABLE IF NOT EXISTS access_rules (
+                created_at   INTEGER NOT NULL,
+                updated_at   INTEGER NOT NULL,
+                received_at  INTEGER NOT NULL
+            );".to_string(),
+            "CREATE TABLE IF NOT EXISTS access_rules (
                 path    TEXT NOT NULL,
                 type    TEXT NOT NULL,
                 role    TEXT NOT NULL,
-                creat   BOOL DEFAULT true,
+                creat   BOOLEAN DEFAULT true,
                 edit    TEXT DEFAULT 'own',
                 delet   TEXT DEFAULT 'own',
                 PRIMARY KEY (path, type, role)
-            );
-            CREATE TABLE IF NOT EXISTS constraints (
+            );".to_string(),
+            "CREATE TABLE IF NOT EXISTS constraints (
                 path    TEXT NOT NULL,
                 type    TEXT NOT NULL,
-                uniques JSON,
-                checks  JSON,
+                uniques TEXT,
+                checks  TEXT,
                 PRIMARY KEY (path, type)
-            );
-            CREATE TABLE IF NOT EXISTS schemas (
+            );".to_string(),
+            "CREATE TABLE IF NOT EXISTS schemas (
                 type    TEXT PRIMARY KEY,
-                schema  JSON NOT NULL
-            );
-            CREATE TABLE IF NOT EXISTS pending_messages (
+                schema  TEXT NOT NULL
+            );".to_string(),
+            "CREATE TABLE IF NOT EXISTS pending_messages (
                 id      SERIAL PRIMARY KEY,
                 type    TEXT NOT NULL,
                 target  TEXT NOT NULL,
-                msg     JSON NOT NULL
+                msg     TEXT NOT NULL
             );".to_string(),
-            vec![],
-            None
-        );
+        ];
+        for c in creates {
+            let r = client.write(c, vec![], None);
+            print_to_terminal(0, &format!("{:?}",r));
+        }
 
         // 2. create /{id} and /{id}/private paths if they aren't already there
         create_path(
@@ -120,9 +120,9 @@ impl BedrockClient {
                 replication: PathReplication::Host,
                 access_rules: HashMap::new(),
                 security: PathSecurity::Public,
-                created_at: SystemTime::now(),
-                updated_at: SystemTime::now(),
-                received_at: SystemTime::now(),
+                created_at: sys_time_to_u64(SystemTime::now()),
+                updated_at: sys_time_to_u64(SystemTime::now()),
+                received_at: sys_time_to_u64(SystemTime::now()),
             },
         );
         create_path(
@@ -135,9 +135,9 @@ impl BedrockClient {
                 replication: PathReplication::Host,
                 access_rules: HashMap::new(),
                 security: PathSecurity::HostInvite,
-                created_at: SystemTime::now(),
-                updated_at: SystemTime::now(),
-                received_at: SystemTime::now(),
+                created_at: sys_time_to_u64(SystemTime::now()),
+                updated_at: sys_time_to_u64(SystemTime::now()),
+                received_at: sys_time_to_u64(SystemTime::now()),
             },
         );
 
@@ -147,20 +147,22 @@ impl BedrockClient {
         }
     }
 
+    /*
     pub fn cleanup(&self) {
-        let _ = self
-            .client
-            .write("DROP TABLE IF EXISTS self_info;
-                DROP TABLE IF EXISTS all_peers;
-                DROP TABLE IF EXISTS peers;
-                DROP TABLE IF EXISTS paths;
-                DROP TABLE IF EXISTS access_rules;
-                DROP TABLE IF EXISTS constraints;
-                DROP TABLE IF EXISTS schemas;
-                DROP TABLE IF EXISTS pending_messages;".to_string(),
-                vec![],
-                None
-            );
+        let drops = [
+            "DROP TABLE IF EXISTS self_info;".to_string(),
+            "DROP TABLE IF EXISTS all_peers;".to_string(),
+            "DROP TABLE IF EXISTS peers;".to_string(),
+            "DROP TABLE IF EXISTS paths;".to_string(),
+            "DROP TABLE IF EXISTS access_rules;".to_string(),
+            "DROP TABLE IF EXISTS constraints;".to_string(),
+            "DROP TABLE IF EXISTS schemas;".to_string(),
+            "DROP TABLE IF EXISTS pending_messages;".to_string()
+        ];
+        for d in drops {
+            let _ = self.client.write(d, vec![], None);
+        }
+
         let tbl_names = self
             .client
             .read(
@@ -176,6 +178,7 @@ impl BedrockClient {
         }
     }
 
+    */
     pub fn create_path(&self, path: Path) -> bool {
         create_path(&self.client, &self.our, path)
     }
@@ -187,11 +190,11 @@ impl BedrockClient {
         let host = self.host_for(&path.path).unwrap();
         //if we are the path host, save the row and tell all the peers
         if host == self.our.to_string() {
-            println!("we are host, update_path");
+            print_to_terminal(0, "we are host, update_path");
             // TODO: detect host change and update peer table accordingly
             let _ = self.client.write(
                "UPDATE paths SET (metadata, host, replication, security, updated_at, received_at) = ($1, $2, $3, $4, $5, $6) WHERE path = $7".to_string(),
-                vec![path.metadata.clone(), Value::String(path.host.clone()), Value::String(path.replication.to_string()), Value::String(path.security.to_string()), sys_time_to_value(path.updated_at), sys_time_to_value(path.received_at), Value::String(str_path)],
+                vec![path.metadata.clone(), Value::String(path.host.clone()), Value::String(path.replication.to_string()), Value::String(path.security.to_string()), serde_json::to_value(path.updated_at).unwrap(), serde_json::to_value(path.received_at).unwrap(), Value::String(str_path)],
                 None,
             );
             // create the pending_message s
@@ -230,7 +233,7 @@ impl BedrockClient {
         // first, sanity check that the peer isn't already in the peerlist
         let peers = peers_for(path, &self.client);
         if peers.contains(&peer.id) {
-            println!("peer is already in the path");
+            print_to_terminal(0, "peer is already in the path");
             return;
         }
 
@@ -238,7 +241,7 @@ impl BedrockClient {
         let host = self.host_for(path).unwrap();
         //if we are the path host, save the row and tell all the peers
         if host == self.our.to_string() {
-            println!("we are the host... saving new peer");
+            print_to_terminal(0, "we are the host... saving new peer");
             let _ = self.client.write(
                 String::from("INSERT INTO peers (path, id, role, metadata, created_at, updated_at, received_at) VALUES ($1, $2, $3, $4, $5, $6, $7)"),
                 peer.to_value_vec(),
@@ -279,7 +282,7 @@ impl BedrockClient {
         // first, sanity check that the peer is already in the peerlist
         let peers = peers_for(&peer.path, &self.client);
         if !peers.contains(&peer.id) {
-            eprintln!("peer not in the path");
+            print_to_terminal(0, "peer not in the path");
             return;
         }
 
@@ -287,7 +290,7 @@ impl BedrockClient {
         let host = self.host_for(&peer.path).unwrap();
         //if we are the path host, save the row and tell all the peers
         if host == self.our.to_string() {
-            println!("we are the host... saving new peer");
+            print_to_terminal(0, "we are the host... saving new peer");
             let _ = self.client.write(
                String::from("UPDATE peers SET (role, metadata, updated_at, received_at) = ($1, $2, $3, $4) WHERE path = $5 AND id = $6"),
                 vec![Value::String(peer.role), peer.metadata, sys_time_to_value(peer.updated_at), sys_time_to_value(peer.received_at), Value::String(peer.path.clone()), Value::String(peer.id)],
@@ -339,7 +342,7 @@ impl BedrockClient {
                 self.leave_path_sql(path);
                 for p in peers {
                     if p.id == self.our.to_string() { continue; } // don't need to tell ourself
-                    println!("sending del-peer of themselves (equivalent to del-path) to peer {}", p.id);
+                    print_to_terminal(0, &format!("sending del-peer of themselves (equivalent to del-path) to peer {}", p.id));
                     let subreq = SubRequest {path: None, peers: Some(vec![p.clone()]), rows: None, ids: None};
                     let _ = self.client.write(
                         String::from("INSERT INTO pending_messages (type, target, msg) VALUES ('del-peer', $1, $2)"),
@@ -357,7 +360,7 @@ impl BedrockClient {
                 // tell all the peers that we deleted the peer
                 for p in peers {
                     if p.id == self.our.to_string() { continue; } // don't need to tell ourself
-                    println!("sending del-peer to peer {}", p.id);
+                    print_to_terminal(0, &format!("sending del-peer to peer {}", p.id));
                     //let _ = self.client.execute(
                     //    "INSERT INTO pending_messages (type, target, msg) VALUES ('del-peer', $1, $2)",
                     //    &[&p.id, &serde_json::to_value(&subreq).unwrap()]
@@ -375,7 +378,7 @@ impl BedrockClient {
         Ok(())
     }
 
-    pub fn insert_row(&self, row: Row) {
+    pub fn add_row(&self, row: Row) {
         let pathhost: String = self.host_for(&row.path).unwrap();
         let _subreq = SubRequest {path: None, peers: None, rows: Some(vec![row.clone()]), ids: None};
         //if we are the path host, save the row and tell all the peers
@@ -455,7 +458,7 @@ impl BedrockClient {
             let peers = self.get_peers(&path).unwrap();
             for p in peers {
                 if p.id == self.our.to_string() { continue; } // don't need to tell ourself
-                println!("sending del-row to peer {}", p.id);
+                print_to_terminal(0, &format!("sending del-row to peer {}", p.id));
                 //let _ = self.client.execute(
                 //    "INSERT INTO pending_messages (type, target, msg) VALUES ('del-row', $1, $2)",
                 //    &[&p.id, &serde_json::to_value(&subreq).unwrap()]
@@ -492,11 +495,11 @@ impl BedrockClient {
         if peerid != path.host { return Err(()); } // only host can add us
 
         let raw = self.client
-            .read(String::from("SELECT host FROM paths WHERE path = $1"), vec![SqlValue::Text(path.path.clone())])
+            .read(String::from("SELECT host FROM paths WHERE path = $1"), vec![Value::String(path.path.clone())])
             .unwrap();
         if raw.len() > 0 { return Err(()); } // we are already in the path
 
-        path.received_at = SystemTime::now();
+        path.received_at = sys_time_to_u64(SystemTime::now());
         let _ = self.client.write(
            "INSERT INTO paths (path, metadata, host, replication, security, created_at, updated_at, received_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)".to_string(),
             path.to_value_vec(),
@@ -522,7 +525,7 @@ impl BedrockClient {
         if foreign_peerid != path.host { return Err(()); } // only host can add peers
 
         let raw = self.client
-            .read("SELECT host FROM paths WHERE path = $1".to_string(), vec![SqlValue::Text(path.path)])
+            .read("SELECT host FROM paths WHERE path = $1".to_string(), vec![Value::String(path.path)])
             .unwrap();
         if raw.len() == 0 { return Err(()); } // we aren't in the path
 
@@ -580,7 +583,7 @@ impl BedrockClient {
         if !["host", "admin"].contains(&req_role.as_str()) { return Err(()); } // only host and admins can update path
 
         // update it
-        path.received_at = SystemTime::now();
+        path.received_at = sys_time_to_u64(SystemTime::now());
         // TODO: detect host change and update peer table accordingly
         let _ = self.client.write(
            String::from("UPDATE paths SET (metadata, host, replication, security, updated_at, received_at) = ($1, $2, $3, $4, $5, $6) WHERE path = $7"),
@@ -589,8 +592,8 @@ impl BedrockClient {
                 Value::String(path.host),
                 Value::String(path.replication.to_string()),
                 Value::String(path.security.to_string()),
-                sys_time_to_value(path.updated_at),
-                sys_time_to_value(path.received_at),
+                serde_json::to_value(path.updated_at).unwrap(),
+                serde_json::to_value(path.received_at).unwrap(),
                 Value::String(path.path)
             ],
             None
@@ -628,7 +631,7 @@ impl BedrockClient {
         // this deletion, and does this row have the right to be deleted?
         //let path = self.get_path(&row.path);
         let raw = self.client
-            .read(String::from("SELECT host FROM paths WHERE path = $1"), vec![SqlValue::Text(id.path.clone())])
+            .read(String::from("SELECT host FROM paths WHERE path = $1"), vec![Value::String(id.path.clone())])
             .unwrap();
         if raw.len() == 0 { return Err(()); } // we are not in the path, something is wrong
 
@@ -682,7 +685,7 @@ impl BedrockClient {
             .client
             .read(
                 String::from("SELECT host FROM paths WHERE path = $1"),
-                vec![SqlValue::Text(String::from(path))],
+                vec![Value::String(String::from(path))],
             )
             .unwrap();
         if raw.len() == 0 {
@@ -761,9 +764,9 @@ impl BedrockClient {
                         path   text not null,
                         id     text primary key,
                         sender  text not null,
-                        created_at   TIMESTAMP NOT NULL,
-                        updated_at   TIMESTAMP NOT NULL,
-                        received_at  TIMESTAMP NOT NULL,
+                        created_at   INTEGER NOT NULL,
+                        updated_at   INTEGER NOT NULL,
+                        received_at  INTEGER NOT NULL,
                       {})",
                 tbl_name, tbl_def
             );
@@ -775,7 +778,7 @@ impl BedrockClient {
         } else {
             format!("INSERT INTO {} (path, id, sender, created_at, updated_at, received_at, {}) VALUES ($1, $2, $3, $4, $5, $6, {})", tbl_name, cols, vals)
         };
-        println!("save row: {}, {:?}",stmt, row_values);
+        print_to_terminal(0, &format!("save row: {}, {:?}",stmt, row_values));
 
         let _ = self.client.write(stmt, row_values, None);
     }
@@ -787,7 +790,7 @@ impl BedrockClient {
     pub fn get_peers(&self, path: &str) -> Result<Vec<Peer>, ()> {
         let raw = self
             .client
-            .read("SELECT * FROM peers WHERE path = $1".to_string(), vec![SqlValue::Text(path.to_string())]);
+            .read("SELECT * FROM peers WHERE path = $1".to_string(), vec![Value::String(path.to_string())]);
 
         match raw {
             Err(_) => Err(()),
@@ -1006,7 +1009,7 @@ impl Peer {
             Value::String(self.path.clone()),
             Value::String(self.id.clone()),
             Value::String(self.role.clone()),
-            self.metadata.clone(),
+            Value::String(serde_json::to_string(&self.metadata).unwrap()),
             sys_time_to_value(self.created_at),
             sys_time_to_value(self.updated_at),
             sys_time_to_value(self.received_at),
@@ -1024,9 +1027,9 @@ pub enum PathReplication {
 impl std::fmt::Display for PathReplication {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
-            PathReplication::Host => write!(f, "host"),
-            PathReplication::MultiHost => write!(f, "multi-host"),
-            PathReplication::Gossip => write!(f, "gossip"),
+            PathReplication::Host => write!(f, "Host"),
+            PathReplication::MultiHost => write!(f, "MultiHost"),
+            PathReplication::Gossip => write!(f, "Gossip"),
         }
     }
 }
@@ -1034,9 +1037,9 @@ impl FromStr for PathReplication {
     type Err = ();
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
-            "host" => Ok(PathReplication::Host),
-            "multi-host" => Ok(PathReplication::MultiHost),
-            "gossip" => Ok(PathReplication::Gossip),
+            "Host" => Ok(PathReplication::Host),
+            "MultiHost" => Ok(PathReplication::MultiHost),
+            "Gossip" => Ok(PathReplication::Gossip),
             _ => Err(()),
         }
     }
@@ -1053,10 +1056,10 @@ pub enum PathSecurity {
 impl std::fmt::Display for PathSecurity {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
-            PathSecurity::Public => write!(f, "public"),
-            PathSecurity::MemberInvite => write!(f, "member-invite"),
-            PathSecurity::HostInvite => write!(f, "host-invite"),
-            PathSecurity::NftGated => write!(f, "nft-gated"),
+            PathSecurity::Public => write!(f, "Public"),
+            PathSecurity::MemberInvite => write!(f, "MemberInvite"),
+            PathSecurity::HostInvite => write!(f, "HostInvite"),
+            PathSecurity::NftGated => write!(f, "NftGated"),
         }
     }
 }
@@ -1071,6 +1074,11 @@ impl FromStr for PathSecurity {
             "host-invite" => Ok(PathSecurity::HostInvite),
             "nft-gated" => Ok(PathSecurity::NftGated),
             "host" => Ok(PathSecurity::HostInvite),
+
+            "Public" => Ok(PathSecurity::Public),
+            "MemberInvite" => Ok(PathSecurity::MemberInvite),
+            "HostInvite" => Ok(PathSecurity::HostInvite),
+            "NftGated" => Ok(PathSecurity::NftGated),
             _ => Err(()),
         }
     }
@@ -1084,6 +1092,9 @@ pub enum AccessPermission {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+/*
+/m our@bedrock:bedrock:template.nec {"AddPath":{"target":"asdf", "data":{"path":{"path":"/asdf","host":"asdf","replication":"Host","access_rules":{},"security":"Public","metadata":{},"created_at":0,"updated_at":0,"received_at":0}}}}
+*/
 pub struct Path {
     pub path: String,
     pub host: String,
@@ -1091,23 +1102,24 @@ pub struct Path {
     pub access_rules: HashMap<String, AccessRule>, // key is {tbl_name}-{role}
     pub security: PathSecurity,
     pub metadata: Value,
-    pub created_at: SystemTime,
-    pub updated_at: SystemTime,
-    pub received_at: SystemTime,
+    pub created_at: u64,
+    pub updated_at: u64,
+    pub received_at: u64,
 }
 impl Path {
     fn to_value_vec(&self) -> Vec<Value> {
+        print_to_terminal(0, &format!("{}",self.replication));
        // alway in the following order:
        // path, metadata, host, replication, security, created_at, updated_at, received_at
         vec![
             Value::String(self.path.clone()),
-            self.metadata.clone(),
+            Value::String(serde_json::to_string(&self.metadata).unwrap()),
             Value::String(self.host.clone()),
             Value::String(self.replication.to_string()),
             Value::String(self.security.to_string()),
-            sys_time_to_value(self.created_at),
-            sys_time_to_value(self.updated_at),
-            sys_time_to_value(self.received_at),
+            serde_json::to_value(self.created_at).unwrap(),
+            serde_json::to_value(self.updated_at).unwrap(),
+            serde_json::to_value(self.received_at).unwrap(),
         ]
     }
 }
@@ -1136,6 +1148,7 @@ impl Row {
     pub fn tbl_name(&self) -> String {
         format!("{}_{}", self.tbl_type.0, self.tbl_type.1)
     }
+
     pub fn parse_tbl_name(tbl: String) -> (String, String) {
         let mut first = String::new();
         let last: String = tbl.split("_").last().unwrap().to_string();
@@ -1154,6 +1167,7 @@ impl Row {
         }
         (first, last)
     }
+
     pub fn id_string(&self) -> String {
         format!("/{}{}", self.id.0, self.id.1)
     }
@@ -1260,7 +1274,7 @@ pub async fn start_swarm(db: &BedrockClient, port: Option<String>) -> Result<Swa
         None => format!("{}{}", default_listen_str, "0"),
         Some(p) => format!("{}{}", default_listen_str, p),
     };
-    println!("trying to start swarm");
+    print_to_terminal(0, "trying to start swarm");
     let mut swarm = libp2p::SwarmBuilder::with_existing_identity(db.key.clone())
         .with_tokio()
         .with_tcp(
@@ -1397,19 +1411,19 @@ async fn connect(conn: &str) -> Result<tokio_postgres::Client, Error> {
 */
 pub fn create_path(client: &Sqlite, our: &Address, path: Path) -> bool {
     let raw = client
-        .read("SELECT host FROM paths WHERE path = $1".to_string(), vec![SqlValue::Text(path.path.to_string())])
-        .unwrap();
+        .read("SELECT host FROM paths WHERE path = ?;".to_string(), vec![Value::String(path.path.to_string())]);
+    let raw = raw.unwrap();
 
     if raw.len() == 0 {
         let _ = client.write(
-            String::from("INSERT INTO paths (path, metadata, host, replication, security, created_at, updated_at, received_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)"),
+            String::from("INSERT INTO paths (path, metadata, host, replication, security, created_at, updated_at, received_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?);"),
             path.to_value_vec(),
             None
         );
 
         let _ = client.write(
-           "INSERT INTO peers (path, id, role, metadata, created_at, updated_at, received_at) VALUES ($1, $2, 'host', $3, $4, $5, $6)".to_string(),
-            vec![Value::String(path.path), Value::String(our.to_string()), json!({}), sys_time_to_value(path.created_at), sys_time_to_value(path.updated_at), sys_time_to_value(path.received_at)],
+           "INSERT INTO peers (path, id, role, metadata, created_at, updated_at, received_at) VALUES (?, ?, 'host', ?, ?, ?, ?)".to_string(),
+            vec![Value::String(path.path), Value::String(our.to_string()), Value::String("{}".to_string()), serde_json::to_value(path.created_at).unwrap(), serde_json::to_value(path.updated_at).unwrap(), serde_json::to_value(path.received_at).unwrap()],
             None
         );
         true
@@ -1535,7 +1549,7 @@ pub fn get_by_id(client: &Sqlite, table: String, id: String) -> Result<Row, ()> 
     }
 
     let raw = client
-        .read(format!("SELECT * FROM {} WHERE id = $1", table), vec![SqlValue::Text(id)])
+        .read(format!("SELECT * FROM {} WHERE id = $1", table), vec![Value::String(id)])
         .unwrap();
 
     Ok(parse_row(&raw[0], table))
@@ -1548,7 +1562,7 @@ pub fn get_by_id2(client: &Sqlite, table: String, id: String) -> Result<Row, ()>
     }
 
     let raw = client
-        .read(format!("SELECT * FROM {} WHERE id = $1", table), vec![SqlValue::Text(id)])
+        .read(format!("SELECT * FROM {} WHERE id = $1", table), vec![Value::String(id)])
         .unwrap();
 
     Ok(parse_row(&raw[0], table))
@@ -1558,7 +1572,7 @@ pub fn get_peer(client: &Sqlite, path: String, id: String) -> Result<Peer, ()> {
     let raw = client
         .read(
             String::from("SELECT * FROM peers WHERE path = $1 AND id = $2"),
-            vec![SqlValue::Text(path), SqlValue::Text(id)]
+            vec![Value::String(path), Value::String(id)]
         );
     match raw {
         Err(_) => Err(()),
@@ -1590,7 +1604,7 @@ pub fn get_table(client: &Sqlite, table: String, path: String) -> Result<Vec<Row
     let raw = client
         .read(
             format!("SELECT * FROM {} WHERE path = $1", table),
-            vec![SqlValue::Text(path)],
+            vec![Value::String(path)],
         )
         .unwrap();
 
@@ -1619,7 +1633,7 @@ pub fn get_fullpath(client: &Sqlite, path: String) -> Result<Vec<Row>, ()> {
             let raw = client
                 .read(
                     format!("SELECT * FROM {} WHERE path = $1", table),
-                    vec![SqlValue::Text(path.clone())],
+                    vec![Value::String(path.clone())],
                 )
                 .unwrap();
             for r in raw {
@@ -1799,7 +1813,7 @@ pub fn peers_for(path: &str, client: &Sqlite) -> Vec<String> {
     let raw = client
         .read(
             String::from("SELECT id FROM peers WHERE path = $1"),
-            vec![SqlValue::Text(String::from(path))]
+            vec![Value::String(String::from(path))]
         )
         .unwrap();
     let mut result: Vec<String> = Vec::with_capacity(raw.len());
@@ -1811,7 +1825,7 @@ pub fn peers_for(path: &str, client: &Sqlite) -> Vec<String> {
 
 fn we_are_in_path(path: &str, client: &Sqlite) -> bool {
     let raw = client
-        .read("SELECT host FROM paths WHERE path = $1".to_string(), vec![SqlValue::Text(path.to_string())])
+        .read("SELECT host FROM paths WHERE path = $1".to_string(), vec![Value::String(path.to_string())])
         .unwrap();
 
     if raw.len() == 0 {
@@ -1823,7 +1837,7 @@ fn we_are_in_path(path: &str, client: &Sqlite) -> bool {
 
 pub fn get_path(client: &Sqlite, path: &str) -> Result<Path, ()> {
     let raw = client
-        .read("SELECT * FROM paths WHERE path = $1".to_string(), vec![SqlValue::Text(path.to_string())])
+        .read("SELECT * FROM paths WHERE path = $1".to_string(), vec![Value::String(path.to_string())])
         .unwrap();
 
     if raw.len() == 0 {
@@ -1837,9 +1851,9 @@ pub fn get_path(client: &Sqlite, path: &str) -> Result<Path, ()> {
             // TODO: actually read from the access_rules table and generate this properly
             access_rules: HashMap::new(),
             security: PathSecurity::from_str(raw[0].get("security").unwrap().as_str().unwrap()).unwrap(),
-            created_at: value_to_sys(raw[0].get("created_at").unwrap()),
-            updated_at: value_to_sys(raw[0].get("updated_at").unwrap()),
-            received_at: value_to_sys(raw[0].get("received_at").unwrap()),
+            created_at: raw[0].get("created_at").unwrap().as_u64().unwrap(),
+            updated_at: raw[0].get("updated_at").unwrap().as_u64().unwrap(),
+            received_at: raw[0].get("received_at").unwrap().as_u64().unwrap(),
         })
     }
 }
@@ -1849,8 +1863,13 @@ fn value_to_sys(time: &Value) -> SystemTime {
      SystemTime::UNIX_EPOCH.checked_add(dur).unwrap()
 }
 
-fn sys_time_to_value(time: SystemTime) -> Value {
+fn sys_time_to_u64(time: SystemTime) -> u64 {
     let num: u64 = time.duration_since(SystemTime::UNIX_EPOCH).unwrap().as_millis().try_into().unwrap();
+    num
+}
+
+fn sys_time_to_value(time: SystemTime) -> Value {
+    let num: u64 = sys_time_to_u64(time);
     serde_json::to_value(serde_json::value::Number::from(num)).unwrap()
 }
 

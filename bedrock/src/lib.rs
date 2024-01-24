@@ -1,22 +1,7 @@
 mod bedrock;
 use bedrock::BedrockClient;
-//use native_tls::TlsConnector;
-//use postgres_native_tls::MakeTlsConnector;
-//use futures::channel::mpsc;
-//use futures::{stream, FutureExt, StreamExt};
 use std::str::FromStr;
-//use pg_embed::pg_enums::PgAuthMethod;
-//use pg_embed::pg_fetch::{PgFetchSettings, PG_V15};
-//use pg_embed::postgres::{PgEmbed, PgSettings};
-//use std::error::Error;
-//use std::path::PathBuf;
-//use tokio::fs;
-//use tokio::net::TcpListener;
-//use tokio::time::Duration;
-//use tokio::time::sleep;
-//use tokio_postgres::config::Config;
 use serde::{Serialize, Deserialize};
-//use tokio::select;
 use kinode_process_lib::{
     await_message,
     get_typed_state,
@@ -164,6 +149,7 @@ impl Guest for Component {
         */
 
         loop {
+            print_to_terminal(0, "bedrock: looping");
             // Call await_message() to wait for any incoming messages.
             // If we get a network error, make a print and throw it away.
             // In a high-quality consumer-grade app, we'd want to explicitly handle
@@ -228,13 +214,14 @@ fn handle_message (
     state: &mut BedrockState,
     bedrock: &BedrockClient
 ) -> anyhow::Result<()> {
-    let source = system_message.source();
+    print_to_terminal(0, &format!("{:?}", system_message));
+    //let source = system_message.source();
     match system_message {
         Message::Response { ref source, ref body, .. } => {
             if let Ok(response) = serde_json::from_slice::<BedrockResponse>(body) {
                 match response {
                     BedrockResponse::Ack { id } => {
-                        print_to_terminal(0, "ack from {source}");
+                        print_to_terminal(0, &format!("ack from {}, {}", source, id));
                     }
                     BedrockResponse::Nack => {
                         print_to_terminal(0, "nack from {source}");
@@ -247,106 +234,168 @@ fn handle_message (
         },
 
         Message::Request { ref source, ref body, .. } => {
+            let r: Result<BedrockRequest, serde_json::Error> = serde_json::from_slice(body);
+            print_to_terminal(0, &format!("{:?}", r));
             match serde_json::from_slice(body)? {
-                BedrockRequest::AddPath { target, data } => {
+//m our@bedrock:bedrock:template.nec {"AddPath":{"target":"asdf", "data":{"path":{"path":"/asdf","host":"asdf","replication":"Host","access_rules":{},"security":"Pub  lic","metadata":{},"created_at":0,"updated_at":0,"received_at":0}}}}
+                BedrockRequest::AddPath { target: _target, data } => {
+                    print_to_terminal(0, &format!("{:?}", data));
                     // we are creating a path
                     if source.node == bedrock.our.node {
                         if let Some(path) = data.path {
+                            bedrock.create_path(path);
+                        }
+                    } else { // some node is trying to add us to a path
+                        if let Some(path) = data.path {
                             if let Some(peers) = data.peers {
-                                println!("saving new path, since foreign peer {source} added us to his path");
-                                let result = bedrock.foreign_new_path(path, source.to_string(), peers);
+                                print_to_terminal(0, "saving new path, since foreign peer {source} added us to his path");
+                                let _result = bedrock.foreign_new_path(path, source.to_string(), peers);
                                 //respond(&mut swarm, channel, request.id, result);
                             }
                         }
-                    } else { // some node is trying to add us to a path
                     }
                 }
-                BedrockRequest::AddPeer { target, data } => {
+                BedrockRequest::AddPeer { target: _target, data } => {
                     // we are adding a peer
                     if source.node == bedrock.our.node {
+                        if let Some(peers) = data.peers {
+                            for peer in peers {
+                                let path = peer.path.clone();
+                                bedrock.add_peer(&path, peer);
+                            }
+                        }
                     } else { // the host (presumably) is adding a peer to a path we are in
                     }
                 }
-                BedrockRequest::AddRow { target, data } => {
+                BedrockRequest::AddRow { target: _target, data } => {
                     // we are adding a row
                     if source.node == bedrock.our.node {
+                        if let Some(rows) = data.rows {
+                            for row in rows {
+                                bedrock.add_row(row);
+                            }
+                        }
                     } else { // the host (presumably) is letting us know about a new row for a path we are in
                     }
                 }
-                BedrockRequest::UpdPath { target, data } => {
+                BedrockRequest::UpdPath { target: _target, data } => {
                     // we are updating a path we are in
                     if source.node == bedrock.our.node {
+                        if let Some(path) = data.path {
+                            let str_path = path.path.clone();
+                            match bedrock.update_path(path) {
+                                Err(_) => print_to_terminal(0, &format!("error updating path {}", str_path)),
+                                Ok(_) => print_to_terminal(0, &format!("updated path {}", str_path)),
+                            }
+                        }
                     } else { // the host (presumably) is letting us know about a path edit
+                        if let Some(path) = data.path {
+                            let _result = bedrock.foreign_upd_path(path, source.to_string());
+                        }
                     }
                 }
-                BedrockRequest::UpdPeer { target, data } => {
+                BedrockRequest::UpdPeer { target: _target, data } => {
                     // we are updating a peer (changing their role)
                     if source.node == bedrock.our.node {
+                        if let Some(peers) = data.peers {
+                            for peer in peers {
+                                bedrock.update_peer(peer);
+                            }
+                        }
                     } else { // the host (presumably) is letting us know about a peer edit
                     }
                 }
-                BedrockRequest::UpdRow { target, data } => {
+                BedrockRequest::UpdRow { target: _target, data } => {
                     // we are updating a row
                     if source.node == bedrock.our.node {
+                        if let Some(rows) = data.rows {
+                            for row in rows {
+                                bedrock.update_row(row);
+                            }
+                        }
                     } else { // the host (presumably) is letting us know about a row edit
                     }
                 }
-                BedrockRequest::DelPath { target, data } => {
+                BedrockRequest::DelPath { target: _target, data } => {
                     // we are trying to 
                     if source.node == bedrock.our.node {
+                        if let Some(path) = data.path {
+                            let str_path = path.path.clone();
+                            match bedrock.delete_path(&path.path) {
+                                Err(_) => print_to_terminal(0, &format!("error updating path {}", str_path)),
+                                Ok(_) => print_to_terminal(0, &format!("updated path {}", str_path)),
+                            }
+                        }
                     } else { // the host
                     }
                 }
-                BedrockRequest::DelPeer { target, data } => {
-                    // we are trying to 
+                BedrockRequest::DelPeer { target: _target, data } => {
+                    // we are trying to delete a peer from a path we own/admin
                     if source.node == bedrock.our.node {
+                        if let Some(peers) = data.peers {
+                            for peer in peers {
+                                let str_path = peer.path.clone();
+                                match bedrock.delete_peer(&peer.id, &peer.path) {
+                                    Err(_) => print_to_terminal(0, &format!("error deleting peer from {}", str_path)),
+                                    Ok(_) => print_to_terminal(0, &format!("deleted peer from {}", str_path)),
+                                }
+                            }
+                        }
                     } else { // the host
                     }
                 }
-                BedrockRequest::DelRow { target, data } => {
+                BedrockRequest::DelRow { target: _target, data } => {
                     // we are trying to 
                     if source.node == bedrock.our.node {
+                        if let Some(rows) = data.rows {
+                            for row in rows {
+                                let id = row.id_string();
+                                match bedrock.delete_row(row.tbl_name(), id.clone(), row.path) {
+                                    Err(_) => print_to_terminal(0, &format!("error deleting row {}", id)),
+                                    Ok(_) => print_to_terminal(0, &format!("deleted row {}", id)),
+                                }
+                            }
+                        }
                     } else { // the host
                     }
                 }
-
-                BedrockRequest::WantAddPeer { target, data } => {
+                BedrockRequest::WantAddPeer { target: _target, data } => {
                     if source.node == bedrock.our.node {
                         // error
                     } else { // we must be the host here, or else this is an error
                     }
                 }
-                BedrockRequest::WantAddRow { target, data } => {
+                BedrockRequest::WantAddRow { target: _target, data } => {
                     if source.node == bedrock.our.node {
                         // error
                     } else { // we must be the host here, or else this is an error
                     }
                 }
-                BedrockRequest::WantUpdPath { target, data } => {
+                BedrockRequest::WantUpdPath { target: _target, data } => {
                     if source.node == bedrock.our.node {
                         // error
                     } else { // we must be the host here, or else this is an error
                     }
                 }
-                BedrockRequest::WantUpdPeer { target, data } => {
+                BedrockRequest::WantUpdPeer { target: _target, data } => {
                     if source.node == bedrock.our.node {
                         // error
                     } else { // we must be the host here, or else this is an error
                     }
                 }
-                BedrockRequest::WantUpdRow { target, data } => {
+                BedrockRequest::WantUpdRow { target: _target, data } => {
                     if source.node == bedrock.our.node {
                         // error
                     } else { // we must be the host here, or else this is an error
                     }
                 }
-                BedrockRequest::WantDelPath { target, data } => {
+                BedrockRequest::WantDelPath { target: _target, data } => {
                     if source.node == bedrock.our.node {
                         // error
                     } else { // we must be the host here, or else this is an error
                     }
                 }
-                BedrockRequest::WantDelPeer { target, data } => {
+                BedrockRequest::WantDelPeer { target: _target, data } => {
                     if source.node == bedrock.our.node {
                         // error
                     } else { // we must be the host here, or else this is an error
