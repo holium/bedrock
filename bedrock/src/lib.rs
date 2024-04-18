@@ -1,5 +1,6 @@
 mod bedrock;
 use bedrock::BedrockClient;
+use bedrock::BedrockRequest;
 use std::str::FromStr;
 use serde::{Serialize, Deserialize};
 use kinode_process_lib::{
@@ -172,35 +173,6 @@ impl Guest for Component {
 struct BedrockState {
     pub our: Address,
     pub dbstr: String,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-enum BedrockRequest {
-    AddPath {target: String, data: bedrock::SubRequest },
-    AddRow {target: String, data: bedrock::SubRequest },
-    AddPeer {target: String, data: bedrock::SubRequest },
-
-    UpdPath {target: String, data: bedrock::SubRequest },
-    UpdPeer {target: String, data: bedrock::SubRequest },
-    UpdRow {target: String, data: bedrock::SubRequest },
-
-    DelPath {target: String, data: bedrock::SubRequest },
-    DelPeer {target: String, data: bedrock::SubRequest },
-    DelRow {target: String, data: bedrock::SubRequest },
-
-    // wants are for when a non-host peer *wants* the host to take some action on their behalf,
-    // thus there's no need for a WantAddPath, because you can't want someone else to add a path
-    // for you, you'd just do it yourself.
-    WantAddRow {target: String, data: bedrock::SubRequest },
-    WantAddPeer {target: String, data: bedrock::SubRequest },
-
-    WantUpdPath {target: String, data: bedrock::SubRequest },
-    WantUpdPeer {target: String, data: bedrock::SubRequest },
-    WantUpdRow {target: String, data: bedrock::SubRequest },
-
-    WantDelPath {target: String, data: bedrock::SubRequest },
-    WantDelPeer {target: String, data: bedrock::SubRequest },
-    WantDelRow {target: String, data: bedrock::SubRequest },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
